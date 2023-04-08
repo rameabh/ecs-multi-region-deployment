@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Fargate Pre-Deployment
+
+## Make changes to Parameters in fargate-pre-deploy1.yaml
+
+# aws cloudformation deploy --template-file fargate-pre-deploy1.yaml --stack-name fargate-pre-deploy --region us-east-1
+# aws cloudformation deploy --template-file fargate-deploy.yaml --stack-name fargate-deploy --capabilities CAPABILITY_NAMED_IAM --region us-east-1
+# aws cloudformation deploy --template-file fargate-post-deploy1.yaml --stack-name fargate-post-deploy --region us-east-1
+
+## Make changes to Parameters in fargate-pre-deploy2.yaml
+
+# aws cloudformation deploy --template-file fargate-pre-deploy2.yaml --stack-name fargate-pre-deploy --region us-west-2
+# aws cloudformation deploy --template-file fargate-deploy.yaml --stack-name fargate-deploy --capabilities CAPABILITY_NAMED_IAM --region us-west-2
+# aws cloudformation deploy --template-file fargate-post-deploy2.yaml --stack-name fargate-post-deploy --region us-west-2
+
+Parameters:
+
+  VPCid:
+    Type: String
+    Default: ''
+  Subnet1:
+    Type: String
+    Default: ''
+  Subnet2:
+    Type: String
+    Default: ''
+  HostedZoneName:
+    Type: String
+    Default: ''
+  Image:
+    Type: String
+    # Update with the Docker image. "You can use images in the Docker Hub registry or specify other repositories (repository-url/image:tag)."
+    Default: 
+  ServiceName:
+    Type: String
+    # update with the name of the service
+    Default: MyService001
+  ContainerPort:
+    Type: Number
+    Default: 80
+  LoadBalancerPort:
+    Type: Number
+    Default: 443
+  HealthCheckPath:
+    Type: String
+    Default: /
+  Subdomain:
+    Type: String
+    Default: myservice
+  # for autoscaling
+  MinContainers:
+    Type: Number
+    Default: 2
+  # for autoscaling
+  MaxContainers:
+    Type: Number
+    Default: 10
+  # target CPU utilization (%)
+  AutoScalingTargetValue:
+    Type: Number
+    Default: 50
+
+Resources:
+  RootCA:
+    Type: AWS::ACMPCA::CertificateAuthority
+    Properties:
+      Type: ROOT
+      KeyAlgorithm: RSA_2048
+      SigningAlgorithm: SHA256WITHRSA
+      Subject:
+        Country: US
+        Organization: My Org LLC
+        OrganizationalUnit: ORGOU
+        DistinguishedNameQualifier: DNQ
+        State: Washington
+        CommonName: CommonName Root CA
+        SerialNumber: string
+        Locality: Seattle
+        Title: Mr
+        Surname: LastName
+        GivenName: FirstName
+        Initials: FL
+        Pseudonym: FL
+        GenerationQualifier: DBG
+      RevocationConfiguration:
+        CrlConfiguration:
+          Enabled: false
+
+  RootCACertificate:
+    Type: AWS::ACMPCA::Certificate
+    Properties:
+      CertificateAuthorityArn:
+        Ref: RootCA
+      CertificateSigningRequest:
+        Fn::GetAtt:
+        - RootCA
+        - CertificateSigningRequest
+      SigningAlgorithm: SHA256WITHRSA
+      TemplateArn: arn:aws:acm-pca:::template/RootCACertificate/V1
+      Validity:
+        Type: YEARS
+        Value: 10
+
+  RootCAActivation:
+    Type: AWS::ACMPCA::CertificateAuthorityActivation
+    Properties:
+      CertificateAuthorityArn:
+        Ref: RootCA
+      Certificate:
+        Fn::GetAtt:
+        - RootCACertificate
+        - Certificate
+      Status: ACTIVE
+
+  RootCAPermission:
+    Type: AWS::ACMPCA::Permission
+    Properties:
+      Actions:
+        - IssueCertificate
+        - GetCertificate
+        - ListPermissions
+      CertificateAuthorityArn: !Ref RootCA
+      Principal: acm.amazonaws.com
+
+Outputs:
+
+  oRootCA:
+    Description: Root CA ARN
+    Value: !GetAtt RootCA.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-rootcaarn
+  oVPCid:
+    Description: VPCid
+    Value: !Ref VPCid
+    Export:
+      Name: !Sub ${AWS::StackName}-vpcid
+  oSubnet1:
+    Description: Subnet1
+    Value: !Ref Subnet1
+    Export:
+      Name: !Sub ${AWS::StackName}-subnet1
+  oSubnet2:
+    Description: Subnet2
+    Value: !Ref Subnet2
+    Export:
+      Name: !Sub ${AWS::StackName}-subnet2
+  oHostedZoneName:
+    Description: Hosted Zone Name
+    Value: !Ref HostedZoneName
+    Export:
+      Name: !Sub ${AWS::StackName}-hostedzone
+  oImage:
+    Description: Image to deploy
+    Value: !Ref Image
+    Export:
+      Name: !Sub ${AWS::StackName}-image
+  oServiceName:
+    Description: Service Name
+    Value: !Ref ServiceName
+    Export:
+      Name: !Sub ${AWS::StackName}-servicename
+  oContainerPort:
+    Description: Container Port
+    Value: !Ref ContainerPort
+    Export:
+      Name: !Sub ${AWS::StackName}-containerport
+  oLoadBalancerPort:
+    Description: Load Balancer Port
+    Value: !Ref LoadBalancerPort
+    Export:
+      Name: !Sub ${AWS::StackName}-lbport
+  oHealthCheckPath:
+    Description: Health Check Path
+    Value: !Ref HealthCheckPath
+    Export:
+      Name: !Sub ${AWS::StackName}-healthchkpath
+  oSubdomain:
+    Description: Subdomain
+    Value: !Ref Subdomain
+    Export:
+      Name: !Sub ${AWS::StackName}-subdomain
+  oMinContainers:
+    Description: Min # of Containers
+    Value: !Ref MinContainers
+    Export:
+      Name: !Sub ${AWS::StackName}-mincontainers
+  oMaxContainers:
+    Description: Max # of Containers
+    Value: !Ref MaxContainers
+    Export:
+      Name: !Sub ${AWS::StackName}-maxcontainers
+  oAutoScalingTargetValue:
+    Description: Auto Scaling Target Value
+    Value: !Ref AutoScalingTargetValue
+    Export:
+      Name: !Sub ${AWS::StackName}-astvalue

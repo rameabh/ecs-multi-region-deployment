@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Fargate Post Deployment (Global Accelerator & Route 53 Update)
+
+Parameters:
+  DeployStackName:
+    Type: String
+    Description: Name of deploy cloudformation stack
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: fargate-deploy
+
+
+Resources:
+
+##### GLOBAL ACCELERATOR #########
+
+  GAAccelerator:
+    Type: 'AWS::GlobalAccelerator::Accelerator'
+    Properties:
+      Name: MySampleAccelerator
+      IpAddressType: "IPV4"
+      Enabled: true
+
+  GAListenerHTTP:
+    Type: 'AWS::GlobalAccelerator::Listener'
+    Properties:
+      AcceleratorArn: !Ref GAAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: '80'
+          ToPort: '80'
+
+  GAEndpointHTTPGroup:
+    Type: 'AWS::GlobalAccelerator::EndpointGroup'
+    Properties:
+      ListenerArn: !Ref GAListenerHTTP
+      EndpointGroupRegion: !Ref AWS::Region
+      EndpointConfigurations:
+        - EndpointId: 
+            Fn::ImportValue:
+              !Sub "${DeployStackName}-albarn"  
+          ClientIPPreservationEnabled: true
+
+  GAListenerHTTPS:
+    Type: 'AWS::GlobalAccelerator::Listener'
+    Properties:
+      AcceleratorArn: !Ref GAAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: '443'
+          ToPort: '443'
+
+  GAEndpointHTTPSGroup:
+    Type: 'AWS::GlobalAccelerator::EndpointGroup'
+    Properties:
+      ListenerArn: !Ref GAListenerHTTPS
+      EndpointGroupRegion: !Ref AWS::Region
+      EndpointConfigurations:
+        - EndpointId: 
+            Fn::ImportValue:
+              !Sub "${DeployStackName}-albarn"  
+          ClientIPPreservationEnabled: true
+
+  AlbRoute53Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name:
+        Fn::ImportValue:
+          !Sub "${DeployStackName}-serviceurl"
+      HostedZoneName:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${DeployStackName}-hostedzone"
+            - "."
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt GAAccelerator.DnsName
+        HostedZoneId: <<id>>
+    DependsOn: GAAccelerator
+
+Outputs:
+  oAlbRoute53Record:
+    Description: Route53 Record
+    Value: !Ref AlbRoute53Record
+    Export:
+      Name: !Sub ${AWS::StackName}-albrt53rec
+  oGAAccelerator:
+    Description: ARN of the Global Accelerator
+    Value: !Ref GAAccelerator
+    Export:
+      Name: !Sub ${AWS::StackName}-glbacc
+  oGAListenerHTTP:
+    Description: Route53 Record
+    Value: !Ref GAListenerHTTP
+    Export:
+      Name: !Sub ${AWS::StackName}-galhttp
+  oGAEndpointHTTPGroup:
+    Description: Route53 Record
+    Value: !Ref GAEndpointHTTPGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-gendhttp
+  oGAListenerHTTPS:
+    Description: Route53 Record
+    Value: !Ref GAListenerHTTPS
+    Export:
+      Name: !Sub ${AWS::StackName}-galhttps
+  oGAEndpointHTTPSGroup:
+    Description: Route53 Record
+    Value: !Ref GAEndpointHTTPSGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-gendhttps

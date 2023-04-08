@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Fargate Post Deployment (Global Accelerator & Route 53 Update)
+
+Parameters:
+  DeployStackName:
+    Type: String
+    Description: Name of deploy cloudformation stack
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: fargate-deploy
+
+  PreDeployStackName:
+    Type: String
+    Description: Name of deploy cloudformation stack
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: fargate-pre-deploy
+
+
+Resources:
+
+##### GLOBAL ACCELERATOR #########
+
+
+  GAEndpointHTTPGroup:
+    Type: 'AWS::GlobalAccelerator::EndpointGroup'
+    Properties:
+      ListenerArn:
+        Fn::ImportValue:
+          !Sub "${PreDeployStackName}-galsnhttpreg1"
+      EndpointGroupRegion: !Ref AWS::Region
+      TrafficDialPercentage: 0
+      EndpointConfigurations:
+        - EndpointId: 
+            Fn::ImportValue:
+              !Sub "${DeployStackName}-albarn"
+          ClientIPPreservationEnabled: true
+
+
+  GAEndpointHTTPSGroup:
+    Type: 'AWS::GlobalAccelerator::EndpointGroup'
+    Properties:
+      ListenerArn:
+        Fn::ImportValue:
+          !Sub "${PreDeployStackName}-galsnhttpsreg1"
+      EndpointGroupRegion: !Ref AWS::Region
+      TrafficDialPercentage: 0
+      EndpointConfigurations:
+        - EndpointId: 
+            Fn::ImportValue:
+              !Sub "${DeployStackName}-albarn"  
+          ClientIPPreservationEnabled: true

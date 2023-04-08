@@ -1,0 +1,346 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy ECS on Fargate.
+Parameters:
+
+  PreDeployStackName:
+    Type: String
+    Description: Name of pre-deploy cloudformation stack
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: fargate-pre-deploy
+
+Resources:
+# Need to create certificate authority 
+  LoadBalancerSSLCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      CertificateAuthorityArn: 
+        Fn::ImportValue: !Sub ${PreDeployStackName}-rootcaarn
+      DomainName:
+        Fn::ImportValue:
+          !Sub ${PreDeployStackName}-hostedzone
+      
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - Cluster
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    # Makes sure the log group is created before it is used.
+    DependsOn: LogGroup
+    Properties:
+      # Name of the task definition. Subsequent versions of the task definition are grouped together under this name.
+      Family:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - TaskDefinition
+      # awsvpc is required for Fargate
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      # 256 (.25 vCPU) - Available memory values: 0.5GB, 1GB, 2GB
+      # 512 (.5 vCPU) - Available memory values: 1GB, 2GB, 3GB, 4GB
+      # 1024 (1 vCPU) - Available memory values: 2GB, 3GB, 4GB, 5GB, 6GB, 7GB, 8GB
+      # 2048 (2 vCPU) - Available memory values: Between 4GB and 16GB in 1GB increments
+      # 4096 (4 vCPU) - Available memory values: Between 8GB and 30GB in 1GB increments
+      Cpu: 256
+      # 0.5GB, 1GB, 2GB - Available cpu values: 256 (.25 vCPU)
+      # 1GB, 2GB, 3GB, 4GB - Available cpu values: 512 (.5 vCPU)
+      # 2GB, 3GB, 4GB, 5GB, 6GB, 7GB, 8GB - Available cpu values: 1024 (1 vCPU)
+      # Between 4GB and 16GB in 1GB increments - Available cpu values: 2048 (2 vCPU)
+      # Between 8GB and 30GB in 1GB increments - Available cpu values: 4096 (4 vCPU)
+      Memory: 0.5GB
+      # A role needed by ECS.
+      # "The ARN of the task execution role that containers in this task can assume. All containers in this task are granted the permissions that are specified in this role."
+      # "There is an optional task execution IAM role that you can specify with Fargate to allow your Fargate tasks to make API calls to Amazon ECR."
+      ExecutionRoleArn: !Ref ExecutionRole
+      # "The Amazon Resource Name (ARN) of an AWS Identity and Access Management (IAM) role that grants containers in the task permission to call AWS APIs on your behalf."
+      TaskRoleArn: !Ref TaskRole
+      ContainerDefinitions:
+        - Name:
+            Fn::ImportValue: 
+              !Sub ${PreDeployStackName}-servicename
+          Image:
+            Fn::ImportValue:
+              !Sub ${PreDeployStackName}-image
+          PortMappings:
+            - ContainerPort:
+                Fn::ImportValue: 
+                  !Sub ${PreDeployStackName}-containerport
+          # Send logs to CloudWatch Logs
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+  # A role needed by ECS
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - !Sub "-${AWS::Region}-"
+            - ExecutionRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+  # A role for the containers
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - !Sub "-${AWS::Region}-"
+            - TaskRole      
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      # ManagedPolicyArns:
+      #   -
+      # Policies:
+      #   -
+  # A role needed for auto scaling
+  AutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - !Sub "-${AWS::Region}-"
+            - AutoScalingRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole'
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - ContainerSecurityGroup
+      VpcId:
+        Fn::ImportValue: !Sub ${PreDeployStackName}-vpcid
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort:
+            Fn::ImportValue:
+              !Sub "${PreDeployStackName}-containerport"
+          ToPort:
+            Fn::ImportValue:
+              !Sub "${PreDeployStackName}-containerport"
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - LoadBalancerSecurityGroup
+      VpcId:
+        Fn::ImportValue: !Sub ${PreDeployStackName}-vpcid
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort:
+            Fn::ImportValue: 
+              !Sub "${PreDeployStackName}-lbport"
+          ToPort:
+            Fn::ImportValue:
+              !Sub "${PreDeployStackName}-lbport"
+          CidrIp: 0.0.0.0/0
+  Service:
+    Type: AWS::ECS::Service
+    # This dependency is needed so that the load balancer is setup correctly in time
+    DependsOn:
+      - ListenerHTTPS
+    Properties: 
+      ServiceName:
+        Fn::ImportValue:
+          !Sub ${PreDeployStackName}-servicename
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 2
+      # This may need to be adjusted if the container takes a while to start up
+      HealthCheckGracePeriodSeconds: 30
+      LaunchType: FARGATE
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          # change to DISABLED if you're using private subnets that have access to a NAT gateway
+          AssignPublicIp: ENABLED
+          Subnets:
+            - Fn::ImportValue: !Sub ${PreDeployStackName}-subnet1
+            - Fn::ImportValue: !Sub ${PreDeployStackName}-subnet2
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+      LoadBalancers:
+        - ContainerName:
+            Fn::ImportValue:
+              !Sub ${PreDeployStackName}-servicename
+          ContainerPort:
+            Fn::ImportValue:
+              !Sub ${PreDeployStackName}-containerport
+          TargetGroupArn: !Ref TargetGroup
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      # will look for a 200 status code by default unless specified otherwise
+      HealthCheckPath:
+        Fn::ImportValue:
+          !Sub ${PreDeployStackName}-healthchkpath
+      HealthCheckTimeoutSeconds: 5
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      Name:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - TargetGroup
+      Port:
+        Fn::ImportValue:
+          !Sub ${PreDeployStackName}-containerport
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60 # default is 300
+      TargetType: ip
+      VpcId:
+        Fn::ImportValue: !Sub ${PreDeployStackName}-vpcid
+  ListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port:
+        Fn::ImportValue:
+          !Sub "${PreDeployStackName}-lbport"
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref LoadBalancerSSLCertificate
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      LoadBalancerAttributes:
+        # this is the default, but is specified here in case it needs to be changed
+        - Key: idle_timeout.timeout_seconds
+          Value: 60
+      Name:
+        Fn::Join:
+          - ""
+          - - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - LoadBalancer
+      # "internal" is also an option
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - Fn::ImportValue: !Sub ${PreDeployStackName}-subnet1
+        - Fn::ImportValue: !Sub ${PreDeployStackName}-subnet2
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Join:
+          - ""
+          - - /ecs/
+            - Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"
+            - TaskDefinition
+  AutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity:
+        Fn::ImportValue:
+          !Sub "${PreDeployStackName}-mincontainers"
+      MaxCapacity:
+        Fn::ImportValue: 
+          !Sub "${PreDeployStackName}-maxcontainers"
+      ResourceId: !Join ['/', [service, !Ref Cluster, !GetAtt Service.Name]]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      # "The Amazon Resource Name (ARN) of an AWS Identity and Access Management (IAM) role that allows Application Auto Scaling to modify your scalable target."
+      RoleARN: !GetAtt AutoScalingRole.Arn
+  AutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Join ['', ['Fn::ImportValue: !Sub "${PreDeployStackName}-servicename"', AutoScalingPolicy]]
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 10
+        ScaleOutCooldown: 10
+        # Keep things at or lower than 50% CPU utilization, for example
+        TargetValue:
+          Fn::ImportValue:
+            !Sub ${PreDeployStackName}-astvalue
+Outputs:
+  oEndpoint:
+    Description: Endpoint
+    Value:
+      Fn::Join:
+        - ""
+        - - "https://"
+          - Fn::ImportValue: !Sub "${PreDeployStackName}-subdomain"
+          - "."
+          - Fn::ImportValue: !Sub "${PreDeployStackName}-hostedzone"
+    Export:
+      Name: !Sub ${AWS::StackName}-endpoint
+  oLBArn:
+    Description: ARN of the ALB
+    Value: !Ref LoadBalancer
+    Export:
+      Name: !Sub ${AWS::StackName}-albarn
+  oLBCertArn:
+    Description: ARN of SSL Cert for ALB.
+    Value: !Ref LoadBalancerSSLCertificate
+    Export:
+      Name: !Sub ${AWS::StackName}-sslcertarn
+  oServiceURL:
+    Description: Web URL of Service
+    Value:
+      Fn::Join:
+        - "."
+        - - Fn::ImportValue: !Sub "${PreDeployStackName}-subdomain"
+          - Fn::ImportValue: !Sub "${PreDeployStackName}-hostedzone"
+    Export:
+      Name: !Sub ${AWS::StackName}-serviceurl
+  oHostedZone:
+    Description: Zone hosted in Route 53
+    Value:
+      Fn::ImportValue:
+        !Sub ${PreDeployStackName}-hostedzone
+    Export:
+      Name: !Sub ${AWS::StackName}-hostedzone

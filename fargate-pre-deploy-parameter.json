@@ -1,0 +1,15 @@
+{
+    "VPCid": "",
+    "Subnet1": "",
+    "Subnet2": "",
+    "HostedZoneName": "",
+    "Image": "",
+    "ServiceName": "",
+    "ContainerPort": 80,
+    "LoadBalancerPort": 443,
+    "HealthCheckPath": "/",
+    "Subdomain": "myservice",
+    "MinContainers": 2,
+    "MaxContainers": 10,
+    "AutoScalingTargetValue": 50
+}
